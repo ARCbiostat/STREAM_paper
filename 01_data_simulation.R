@@ -66,9 +66,11 @@ for (term in event_rate_labels) {
   }
 
 cat(sprintf("Running simulation"))
-
+output_root <- "Simulation/simulation_results"
 for (term in event_rate_labels) {
-
+  outdir <- file.path(output_root, term)
+  dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
+  
 res <-
   simulate_panel_data(
     n_pats      = n_pats,
@@ -92,6 +94,51 @@ if (!ok) { message("SKIP (empty or malformed result)"); next }
 result_file <- file.path(outdir, "simulation_data.rds")
 saveRDS(res, result_file)
 cat("saved ✓\n")
+
+clean_cols <- function(df) {
+  df %>%
+    mutate(
+      onset_real = onset,
+      onset_age_real = onset_age,
+      death_time_real = death_time,
+      onset      = onset_c,
+      onset_age  = onset_age_c,
+      death_time = death_time_c
+    ) %>%
+    select(-onset_c, -onset_age_c, -death_time_c, -right_censoring)
+}
+
+
+get_subset_ids <- function(data, size) {
+  n1 <- round(size * mean(data$onset == 1))
+  n0 <- size - n1
+  onset_1_ids <- sample(data$patient_id[data$onset == 1], n1)
+  onset_0_ids <- sample(data$patient_id[data$onset == 0], n0)
+  c(onset_1_ids, onset_0_ids)
+}
+
+lapply(1:n_seeds,function(s){
+  print(result_file)
+  
+  if (!file.exists(result_file)) {
+    message(cat("Missing file-> skip"))
+    next
+  }
+  
+  data <- readRDS(result_file)
+  real_data  <- clean_cols(data[[1]]) %>% filter(seed==s)
+  panel_data <- clean_cols(data[[2]]) %>% filter(seed==s)
+  
+  
+  
+  data_out <- list(real_data, panel_data)
+  
+  result_file <- file.path(outdir, sprintf("simulation_ready_%03d.rds", s))
+  saveRDS(data_out, result_file)
+  print(sprintf("Saved simulation: event_rate=%s, seed=%d",
+                 term,s))
+})
+
 
 }
 

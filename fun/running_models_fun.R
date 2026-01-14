@@ -1,6 +1,6 @@
 
 
-run_models <- function(size,rate,scheme_id,models,pathnamein="Simulation/simulation_results",pathnameout="Simulation/models_results"){
+run_models <- function(size,rate,models,covnames,pathnamein="Simulation/simulation_results",pathnameout="Simulation/models_results"){
 
   sim_root <- file.path(
     pathnamein,
@@ -18,8 +18,6 @@ run_models <- function(size,rate,scheme_id,models,pathnamein="Simulation/simulat
 
   out_root <- file.path(
     pathnameout,
-    size,
-    paste0("cov_scheme_",scheme_id),
     rate
   )
 
@@ -30,7 +28,7 @@ run_models <- function(size,rate,scheme_id,models,pathnamein="Simulation/simulat
 if(model_tag%in%models){
   coef_list <- mclapply(seeds, function(s) {
     cat(sprintf("\n[SEED %03d] Cox start\n", s))
-    out <- tryCatch(fit_one_seed_cox(s,sim_root,out_root,model_tag),
+    out <- tryCatch(fit_one_seed_cox(s,sim_root,out_root,model_tag,covariates_names=covnames),
                     error = function(e) { message(sprintf("[SEED %03d] ERROR: %s", s, e$message)); NULL })
     if (is.null(out)) cat(sprintf("[SEED %03d] Cox failed\n", s)) else cat(sprintf("[SEED %03d] Cox done\n", s))
     out
@@ -74,25 +72,12 @@ if(model_tag%in%models){
     dir.create(out_base, recursive = TRUE, showWarnings = FALSE)
 
 
-    fits_list <-mclapply(seeds, function(s) fit_one_seed_msm(s, age = FALSE,sim_root,out_base), mc.cores = 10)
+    fits_list <-mclapply(seeds, function(s) fit_one_seed_msm(s, age = FALSE,sim_root,out_base,covariates_names=covnames), mc.cores = 10)
     fits_list <- Filter(function(x) {   !is.null(x$params) && all(!is.na(x$params)) }, fits_list)
     if (length(fits_list) == 0) stop("No simulations loaded; check paths/seeds.")
 
 
     params_only <- lapply(fits_list, function(x) x$params)
-
-    row_names <- rownames(params_only[[1]])
-    col_names <- colnames(params_only[[1]])
-
-    arr <- simplify2array(lapply(params_only, function(M) {
-      M <- as.matrix(M)
-      dimnames(M) <- list(row_names, col_names)
-      M
-    }))
-
-    msm_params <- apply(arr, c(1, 2), function(x) mean(x, na.rm = TRUE))
-
-    saveRDS(msm_params, file.path(out_base, "msm_params_avg.rds"))
 
     gc()
     # ==========================================================
@@ -112,25 +97,9 @@ if(model_tag%in%models){
     dir.create(out_base, recursive = TRUE, showWarnings = FALSE)
 
 
-    fits_list <- mclapply(seeds, function(s) fit_one_seed_msm(s, age = TRUE,sim_root,out_base), mc.cores = 10)
+    fits_list <- lapply(seeds, function(s) fit_one_seed_msm(s, age = TRUE,sim_root,out_base,covariates_names=covnames))
     fits_list <- Filter(function(x) {   !is.null(x$params) && all(!is.na(x$params)) }, fits_list)
     if (length(fits_list) == 0) stop("No simulations loaded; check paths/seeds.")
-
-
-    # params_only <- lapply(fits_list, function(x) x$params)
-    #
-    # row_names <- rownames(params_only[[1]])
-    # col_names <- colnames(params_only[[1]])
-    #
-    # arr <- simplify2array(lapply(params_only, function(M) {
-    #   M <- as.matrix(M)
-    #   dimnames(M) <- list(row_names, col_names)
-    #   M
-    # }))
-
-    # msm_age_params <- apply(arr, c(1, 2), function(x) mean(x, na.rm = TRUE))
-    # msm_age_params <- round(msm_age_params,6)
-    # saveRDS(msm_age_params, file.path(out_base, "msm_age_params_avg.rds"))
 
     gc()
     print("ok msm age")
@@ -151,7 +120,7 @@ if(model_tag%in%models){
     dir.create(out_base, recursive = TRUE, showWarnings = FALSE)
 
 
-    res_list <-lapply(seeds, function(x)fit_one_seed_gomp(x,sim_root,out_root,model_tag))
+    res_list <-lapply(seeds, function(x)fit_one_seed_gomp(x,sim_root,out_root,model_tag,covariates_names=covnames))
     res_list <- Filter(Negate(is.null), res_list)
 
     if (length(res_list) == 0) stop("No simulations loaded; check paths or seeds.")
@@ -199,7 +168,7 @@ if(model_tag%in%models){
     dir.create(out_base, recursive = TRUE, showWarnings = FALSE)
 
 
-    fits_list <-mclapply(seeds, function(s) fit_one_seed_nhm(s,sim_root,sim_root,out_base)
+    fits_list <-mclapply(seeds, function(s) fit_one_seed_nhm(s,sim_root,sim_root,out_base,covariates_names=covnames)
                          ,  mc.cores = 10)
     fits_list <- Filter(function(x) {   !is.null(x$params) && all(!is.na(x$params)) }, fits_list)
     fits_list <- Filter(function(x) !isTRUE(x$model$singular), fits_list)
@@ -208,69 +177,12 @@ if(model_tag%in%models){
     if (length(fits_list) == 0) stop("No simulations loaded; check paths/seeds.")
 
 
-    params_only <- lapply(fits_list, function(x) x$params)
-
-    row_names <- rownames(params_only[[1]])
-    col_names <- colnames(params_only[[1]])
-
-    arr <- simplify2array(lapply(params_only, function(M) {
-      M <- as.matrix(M)
-      dimnames(M) <- list(row_names, col_names)
-      M
-    }))
-
-    # nhm_params <- apply(arr, c(1, 2), function(x) mean(x, na.rm = TRUE))
-    #
-    # saveRDS(nhm_params, file.path(out_base, "nhm_params_avg.rds"))
-
-
     gc()
 
     # ==========================================================
 
     print("ok nhm")
   }
-
-
-# =========================  mipd  ===========================
-
-
-# model_tag  <- "mipd"
-#
-# out_base <- file.path(out_root,
-#                       model_tag)
-# dir.create(out_base, recursive = TRUE, showWarnings = FALSE)
-#
-# cov_vector<-"cov"
-# fits_list <-mclapply(seeds, function(s) fit_one_seed_mipd(s, cov_vector,sim_root,out_base)
-#                      ,  mc.cores = 4)
-# fits_list <- Filter(function(x) {   !is.null(x$params) && all(!is.na(x$params)) }, fits_list)
-# if (length(fits_list) == 0) stop("No simulations loaded; check paths/seeds.")
-#
-#
-# params_only <- lapply(fits_list, function(x) x$params)
-#
-# row_names <- rownames(params_only[[1]])
-# col_names <- colnames(params_only[[1]])
-#
-# arr <- simplify2array(lapply(params_only, function(M) {
-#   M <- as.matrix(M)
-#   dimnames(M) <- list(row_names, col_names)
-#   M
-# }))
-#
-# mipd_params <- apply(arr, c(1, 2), function(x) mean(x, na.rm = TRUE))
-#
-# saveRDS(mipd_params, file.path(out_base, "mipd_params_avg.rds"))
-
-
-
-
-  #==============================================================
-
-
-
-
 
   # =========================  mipd_iterative  ===========================
 #
@@ -283,25 +195,14 @@ model_tag  <- "mipd_iter"
 
     cov_vector<-"cov"
 
-    fits_list <-mclapply(seeds, function(s) fit_one_seed_mipd_iter(s, cov_vector, sim_root,out_base),  mc.cores = 1)
+    fits_list <-lapply(seeds, function(s) fit_one_seed_mipd_iter(s, cov_vector, sim_root,out_base,covariates_names=covnames))
     fits_list <- Filter(function(x) {   !is.null(x$params) && all(!is.na(x$params)) }, fits_list)
     if (length(fits_list) == 0) stop("No simulations loaded; check paths/seeds.")
 
 
     params_only <- lapply(fits_list, function(x) x$params)
 
-    row_names <- rownames(params_only[[1]])
-    col_names <- colnames(params_only[[1]])
 
-    arr <- simplify2array(lapply(params_only, function(M) {
-      M <- as.matrix(M)
-      dimnames(M) <- list(row_names, col_names)
-      M
-    }))
-
-    # mipd_iter_params <- apply(arr, c(1, 2), function(x) mean(x, na.rm = TRUE))
-    #
-    # saveRDS(mipd_iter_params, file.path(out_base, "mipd_iter_params_avg.rds"))
 print("ok mipd iter")
   }
 
@@ -312,65 +213,22 @@ print("ok mipd iter")
 
 #================== Teacher-student traiing ===========================
 
-# model_tag  <- "teach_stud"
-# cov_vector <- c ("cov")
-# cond_vector   <- c("cov", "age", "interval" )
-# inner_cores <- 10
-#
-# # mclapply(seeds, function(s) fit_teach_stud(seed, cov_vector, cond_vector, sim_root, inner_cores, model_tag),  mc.cores = 10)
-#
-# for (seed in seeds){
-#   fit_teach_stud(seed, cov_vector, cond_vector, sim_root, inner_cores, model_tags, scheme_id, rate)
-#   print(seed)
-# }
-#
+model_tag  <- "teach_stud"
+cov_vector <- covnames
+cond_vector   <- c(covnames, "age", "interval" )
+inner_cores <- 10
+
+for (seed in seeds){
+  fit_teach_stud(seed, cov_vector, cond_vector, sim_root, inner_cores, model_tags, scheme_id, rate)
+  print(seed)
+}
+
 
 
 gc()
 
 
 print("I AM DONE.")
-
-
-}
-
-
-run_model_cvae <- function(size,rate,scheme_id,pathnamein="Simulation/simulation_results",pathnameout="Simulation/models_results",boot){
-
-  sim_root <- file.path(
-    pathnamein,
-    size,
-    paste0("cov_scheme_",scheme_id),
-    rate
-  )
-
-  print(sim_root)
-  gt_root  <- paste0(pathnamein,"/ground_truth_params")
-
-  seeds <- 1:200
-
-  model_tag  <- "teach_stud"
-
-  out_root <- file.path(
-    pathnameout,
-    size,
-    paste0("cov_scheme_",scheme_id),
-    rate,
-    model_tag
-  )
-
-  dir.create(out_root, recursive = TRUE, showWarnings = FALSE)
-
-  cov_vector <- c ("cov")
-  cond_vector   <- c("cov", "age", "interval" )
-  inner_cores <- 1
-
-  # mclapply(seeds, function(s) fit_teach_stud(seed, cov_vector, cond_vector, sim_root, inner_cores, model_tag),  mc.cores = 10)
-
-  for (seed in seeds){
-    fit_teach_stud(seed, cov_vector, cond_vector, sim_root, inner_cores, model_tags, scheme_id, rate, pathout=out_root,boot)
-    print(seed)
-  }
 
 
 }
