@@ -199,7 +199,7 @@ prepare_msm <- function(df){
   return(df2)
 }
 
-fit_msm <- function(df,covariates_names) {
+fit_msm <- function(df,covariate_names) {
   Q <- rbind(c(0, 1, 1),
              c(0, 0, 1),
              c(0, 0, 0))
@@ -209,7 +209,7 @@ fit_msm <- function(df,covariates_names) {
         subject    = patient_id,
         data       = df,
         qmatrix    = Q,
-        covariates = as.formula(paste("~",covariates_names)),
+        covariates = as.formula(paste("~",covariate_names)),
         censor     = 99,
         control    = list(fnscale = 1000, maxit = 1000),
         deathexact = TRUE),
@@ -217,27 +217,27 @@ fit_msm <- function(df,covariates_names) {
   )
 
   if (is.null(fit)) {
-    mat <- matrix(NA_real_, nrow = 3, ncol = 2,
+    mat <- matrix(NA_real_, nrow = 3, ncol = 1+length(covariate_names),
                   dimnames = list(c("1","2","3"),
-                                  c("rate","cov")))
+                                  c("rate",covariate_names)))
     return(list(model = NULL, params = mat))
   }
 
   v <- fit$estimates
   if (length(v) < 6) {
-    mat <- matrix(NA_real_, nrow = 3, ncol = 2,  byrow = FALSE,
+    mat <- matrix(NA_real_, nrow = 3, ncol = 1+length(covariate_names),  byrow = FALSE,
                   dimnames = list(c("1","2","3"),
-                                  c("rate",covariates_names)))
+                                  c("rate",covariate_names)))
   } else {
-    mat <- matrix(v[1:6], nrow = 3, byrow = FALSE,
+    mat <- matrix(v, nrow = 3, ncol = 1+length(covariate_names), byrow = FALSE,
                   dimnames = list(c("1","2","3"),
-                                  c("rate",covariates_names)))
+                                  c("rate",covariate_names)))
   }
 
   list(model = fit, params = mat)
 }
 
-fit_msm_age <- function(df,seed,out_dir,covariates_names) {
+fit_msm_age <- function(df,seed,out_dir,covariate_names) {
 
   msm_root <-  file.path(gsub("_age","",out_dir),
                           sprintf("seed_%03d_model_msm.rds", seed))
@@ -254,7 +254,7 @@ fit_msm_age <- function(df,seed,out_dir,covariates_names) {
         data = df,
         qmatrix = Q,
         gen.inits = F,
-        covariates = as.formula(paste("~",covariates_names,"+age")) ,
+        covariates = as.formula(paste("~",covariate_names,"+age")) ,
         control    = list(fnscale = 1000, maxit = 1000),
         censor = 99,
         deathexact = TRUE),
@@ -264,7 +264,7 @@ fit_msm_age <- function(df,seed,out_dir,covariates_names) {
   if (is.null(fit)) {
     mat <- matrix(NA_real_, nrow = 3, ncol = 3,
                   dimnames = list(c("1","2","3"),
-                                  c("rate",covariates_names, "age")))
+                                  c("rate",covariate_names, "age")))
     return(list(model = NULL, params = mat))
   }
 
@@ -272,17 +272,17 @@ fit_msm_age <- function(df,seed,out_dir,covariates_names) {
   if (length(v) < 9) {
     mat <- matrix(NA_real_, nrow = 3, ncol = 3, byrow = F,
                   dimnames = list(c("1","2","3"),
-                                  c("rate","cov", "age")))
+                                  c("rate",covariate_names, "age")))
   } else {
-    mat <- matrix(v[1:9], nrow = 3, byrow = F,
+    mat <- matrix(v, nrow = 3, byrow = F,
                   dimnames = list(c("1","2","3"),
-                                  c("rate","cov", "age")))
+                                  c("rate",covariate_names, "age")))
   }
 
   list(model = fit, params = mat)
 }
 
-fit_one_seed_msm <- function(seed, age= FALSE,path,out_dir,covariates_names) {
+fit_one_seed_msm <- function(seed, age= FALSE,path,out_dir,covariate_names) {
   sim_path <- file.path(path,
                         sprintf("simulation_ready_%03d.rds", seed)
   )
@@ -298,10 +298,10 @@ fit_one_seed_msm <- function(seed, age= FALSE,path,out_dir,covariates_names) {
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
   if (age == FALSE){
-    res <- fit_msm(temp_panel,covariates_names)
+    res <- fit_msm(temp_panel,covariate_names)
     saveRDS(res$model,  file.path(out_base, sprintf("seed_%03d_model_msm.rds",  seed)))
   }else{
-    res <- fit_msm_age(temp_panel, seed,out_base,covariates_names)
+    res <- fit_msm_age(temp_panel, seed,out_base,covariate_names)
     saveRDS(res$model,  file.path(out_base, sprintf("seed_%03d_model_msm_age.rds",  seed)))
   }
 
@@ -329,8 +329,8 @@ fit_nhm <- function(df,covariate_names) {
   split_points <- find_splits(df$age)
 
   covm <- rep(list(tmat_1), length(covariate_names))
-  names(covm) <- covariate_names
   covm <- lapply(seq_len(length(covariate_names)), function(i) covm[[i]] + (i-1)*3)
+  names(covm) <- covariate_names
   fit <- tryCatch({
     object_nhm <- model.nhm(
       state ~ age,
@@ -349,7 +349,7 @@ fit_nhm <- function(df,covariate_names) {
       object_nhm,
       gen_inits   = TRUE,
       score_test  = FALSE,
-      control     = nhm.control(ncores = 10,splits = split_points, obsinfo = FALSE)
+      control     = nhm.control(splits = split_points, obsinfo = FALSE)
     )
 
     model_nhm
@@ -379,7 +379,7 @@ fit_nhm <- function(df,covariate_names) {
   list(model = fit, params = mat)
 }
 
-fit_one_seed_nhm <- function(seed, age= FALSE,path,out_dir,covariates_names) {
+fit_one_seed_nhm <- function(seed, age= FALSE,path,out_dir,covariate_names) {
   sim_path <- file.path(path,
                         sprintf("simulation_ready_%03d.rds", seed))
   if (!file.exists(sim_path)) {
@@ -391,7 +391,7 @@ fit_one_seed_nhm <- function(seed, age= FALSE,path,out_dir,covariates_names) {
   panel_data <- d[[2]]
   temp_panel <- prepare_msm(panel_data)
 
-  res <- fit_nhm(temp_panel,covariates_names)
+  res <- fit_nhm(temp_panel,covariate_names)
   out_base <- out_dir
   dir.create(out_base, recursive = TRUE, showWarnings = FALSE)
 
@@ -403,7 +403,7 @@ fit_one_seed_nhm <- function(seed, age= FALSE,path,out_dir,covariates_names) {
 
 # mipd
 
-fit_one_seed_mipd_iter <- function(seed,cov_vector,path,out_dir,covariates_names) {
+fit_one_seed_mipd_iter <- function(seed,cov_vector,path,out_dir,covariate_names) {
   sim_path <- file.path(path,
                         sprintf("simulation_ready_%03d.rds", seed)
   )
@@ -414,17 +414,6 @@ fit_one_seed_mipd_iter <- function(seed,cov_vector,path,out_dir,covariates_names
 
   d <- readRDS(sim_path)
   panel_data <- d[[2]]
-  panel_data %<>% select(patient_id,
-                         seed,
-                         cov1,
-                         cov2,
-                         cov3,
-                         age,
-                         dead,
-                         death_time,
-                         onset,
-                         onset_age,
-                         visits)
 
   m <- 20
   clock_assumption <- "forward"
@@ -433,10 +422,28 @@ fit_one_seed_mipd_iter <- function(seed,cov_vector,path,out_dir,covariates_names
 
   eps <- 1e-3
   max_iter <- 5
+  panel_data %<>% select(patient_id,
+                         seed,
+                         age,
+                         dead,
+                         death_time,
+                         onset,
+                         onset_age,
+                         visits,
+                         any_of(covariate_names))
+  
+  
 
 
-  res <- tryCatch(
-    run_mipd(panel_data, m, covariates_names, clock_assumption, distribution, inner_cores, max_iter, eps),
+res <- tryCatch(
+  run_mipd(panel_data,
+m = m,
+cov_vector = covariate_names,
+clock_assumption = clock_assumption,
+distribution = distribution,
+inner_cores = 1,
+max_iter = max_iter,
+eps = eps),
     error = function(e) NULL
   )
 
@@ -451,56 +458,51 @@ fit_one_seed_mipd_iter <- function(seed,cov_vector,path,out_dir,covariates_names
 }
 
 
-fit_teach_stud <- function(seed, cov_vector, cond_vector, path, inner_cores, model_tag, scheme_id, rate, pathout,boot=F){
+
+fit_one_seed_streams <- function(seed,cov_vector,path,out_dir,covariate_names) {
   sim_path <- file.path(path,
-                        sprintf("simulation_ready_%03d.rds", seed))
-  print(sim_path)
+                        sprintf("simulation_ready_%03d.rds", seed)
+  )
   if (!file.exists(sim_path)) {
-    stop(sprintf("Missing file for seed %d -> skip", seed))
+    message(sprintf("Missing file for seed %d -> skip", seed))
     return(NULL)
   }
   
   d <- readRDS(sim_path)
   panel_data <- d[[2]]
-  real_data <- d[[1]]
   
-  tau_grid <- list(
-    list(pos=0.80, neg=0.95, tag="adaptive_tau")
+  
+  panel_data %<>% select(patient_id,
+                         seed,
+                         age,
+                         dead,
+                         death_time,
+                         onset,
+                         onset_age,
+                         visits,
+                         any_of(covariate_names))
+  
+  
+  
+  
+  res <- tryCatch(
+    est <- run_streams(
+      data = panel_data,
+      cov_vector = cov_vector,
+      python = Sys.which("python"),
+      pu_args = list(verbose = TRUE)
+    ),
+    error = function(e) NULL
   )
   
-  prior_grid <- list(
-    dropout = list(
-      aug  = "dropout",
-      args = list("--prior_dropout_p" = 0.40)
-    )
-  )
-  versions <- build_versions(tau_grid, prior_grid)
   
-
-    for (v in versions){
-      res <- run_cvae_version(
-        panel_data       = panel_data,
-        real_data        = real_data,
-        cov_vector       = cov_vector,
-        version_name     = v$version_name,
-        seed             = seed,
-        #base_out_dir     = file.path("py","version", paste0("cov_scheme_", scheme_id), rate),
-        base_out_dir    = pathout,
-        train_py         = "py/training_fix_dec4.0.py",
-        infer_py         = "py/inference_fix_dec4.0.py",
-        lab_prop         = 0.5,
-        covariate_names  = cond_vector,
-        train_args       = v$train_args,
-        infer_args       = list("--mc_samples" = 5),
-        m                = 20,
-        clock_assumption = "forward",
-        distribution     = "gompertz",
-        n_cores          = inner_cores
-      )
-      
-    }
-  }
+  out_seed_dir <- file.path(out_dir)
+  dir.create(out_seed_dir, recursive = TRUE, showWarnings = FALSE)
+  
+  saveRDS(res,  file.path(out_seed_dir, sprintf("seed_%03d_model_streams.rds",  seed)))
   
   
+  list(params = res[[2]])
 }
+
 

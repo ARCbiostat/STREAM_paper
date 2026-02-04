@@ -3,4 +3,5 @@
 .RData
 .Ruserdata
 Simulation/simulation_results
-Simulation/simulation_models
+Simulation/models_results
+test STREAM.R

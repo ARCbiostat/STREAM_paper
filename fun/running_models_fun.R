@@ -1,13 +1,14 @@
 
 
-run_models <- function(size,rate,models,covnames,pathnamein="Simulation/simulation_results",pathnameout="Simulation/models_results"){
+run_models <- function(rate,models,covnames,pathnamein="Simulation/simulation_results",pathnameout="Simulation/models_results",cores=1){
 
+  plan(multisession,workers=cores)
   sim_root <- file.path(
     pathnamein,
-    size,
-    paste0("cov_scheme_",scheme_id),
     rate
   )
+  
+  print(sim_root)
 
   print(sim_root)
   gt_root  <- paste0(pathnamein,"/ground_truth_params")
@@ -21,19 +22,18 @@ run_models <- function(size,rate,models,covnames,pathnamein="Simulation/simulati
     rate
   )
 
-
+print(out_root)
 #   # # =====================  survival model ==========================
 
   model_tag <- "cox"
 if(model_tag%in%models){
-  coef_list <- mclapply(seeds, function(s) {
+  coef_list <- future_lapply(seeds, function(s) {
     cat(sprintf("\n[SEED %03d] Cox start\n", s))
-    out <- tryCatch(fit_one_seed_cox(s,sim_root,out_root,model_tag,covariates_names=covnames),
+    out <- tryCatch(fit_one_seed_cox(s,sim_root,out_root,model_tag,covariate_names=covnames),
                     error = function(e) { message(sprintf("[SEED %03d] ERROR: %s", s, e$message)); NULL })
     if (is.null(out)) cat(sprintf("[SEED %03d] Cox failed\n", s)) else cat(sprintf("[SEED %03d] Cox done\n", s))
     out
-  }
-  ,  mc.cores = 10)
+  })
 
   coef_list <- Filter(Negate(is.null), coef_list)
   if (length(coef_list) == 0) stop("No successful Cox fits; check paths/seeds/data.")
@@ -72,7 +72,7 @@ if(model_tag%in%models){
     dir.create(out_base, recursive = TRUE, showWarnings = FALSE)
 
 
-    fits_list <-mclapply(seeds, function(s) fit_one_seed_msm(s, age = FALSE,sim_root,out_base,covariates_names=covnames), mc.cores = 10)
+    fits_list <-lapply(seeds, function(s) fit_one_seed_msm(s, age = FALSE,sim_root,out_base,covariate_names=covnames))
     fits_list <- Filter(function(x) {   !is.null(x$params) && all(!is.na(x$params)) }, fits_list)
     if (length(fits_list) == 0) stop("No simulations loaded; check paths/seeds.")
 
@@ -97,7 +97,7 @@ if(model_tag%in%models){
     dir.create(out_base, recursive = TRUE, showWarnings = FALSE)
 
 
-    fits_list <- lapply(seeds, function(s) fit_one_seed_msm(s, age = TRUE,sim_root,out_base,covariates_names=covnames))
+    fits_list <- future_lapply(seeds, function(s) fit_one_seed_msm(s, age = TRUE,sim_root,out_base,covariate_names=covnames))
     fits_list <- Filter(function(x) {   !is.null(x$params) && all(!is.na(x$params)) }, fits_list)
     if (length(fits_list) == 0) stop("No simulations loaded; check paths/seeds.")
 
@@ -120,7 +120,7 @@ if(model_tag%in%models){
     dir.create(out_base, recursive = TRUE, showWarnings = FALSE)
 
 
-    res_list <-lapply(seeds, function(x)fit_one_seed_gomp(x,sim_root,out_root,model_tag,covariates_names=covnames))
+    res_list <-future_lapply(seeds, function(x)fit_one_seed_gomp(x,sim_root,out_root,model_tag,covariate_names=covnames))
     res_list <- Filter(Negate(is.null), res_list)
 
     if (length(res_list) == 0) stop("No simulations loaded; check paths or seeds.")
@@ -168,8 +168,8 @@ if(model_tag%in%models){
     dir.create(out_base, recursive = TRUE, showWarnings = FALSE)
 
 
-    fits_list <-mclapply(seeds, function(s) fit_one_seed_nhm(s,sim_root,sim_root,out_base,covariates_names=covnames)
-                         ,  mc.cores = 10)
+    fits_list <-future_lapply(seeds, function(s) fit_one_seed_nhm(s,sim_root,sim_root,out_base,covariate_names=covnames)
+                         )
     fits_list <- Filter(function(x) {   !is.null(x$params) && all(!is.na(x$params)) }, fits_list)
     fits_list <- Filter(function(x) !isTRUE(x$model$singular), fits_list)
 
@@ -195,7 +195,7 @@ model_tag  <- "mipd_iter"
 
     cov_vector<-"cov"
 
-    fits_list <-lapply(seeds, function(s) fit_one_seed_mipd_iter(s, cov_vector, sim_root,out_base,covariates_names=covnames))
+    fits_list <-future_lapply(seeds, function(s) fit_one_seed_mipd_iter(s, cov_vector, sim_root,out_base,covariate_names=covnames))
     fits_list <- Filter(function(x) {   !is.null(x$params) && all(!is.na(x$params)) }, fits_list)
     if (length(fits_list) == 0) stop("No simulations loaded; check paths/seeds.")
 
@@ -207,30 +207,31 @@ print("ok mipd iter")
   }
 
 
-#==============================================================
+#=========================streams=====================================
 
 
+model_tag  <- "streams"
 
-#================== Teacher-student traiing ===========================
-
-model_tag  <- "teach_stud"
-cov_vector <- covnames
-cond_vector   <- c(covnames, "age", "interval" )
-inner_cores <- 10
-
-for (seed in seeds){
-  fit_teach_stud(seed, cov_vector, cond_vector, sim_root, inner_cores, model_tags, scheme_id, rate)
-  print(seed)
+if(model_tag%in%models){
+  out_base <- file.path(out_root,
+                        model_tag)
+  dir.create(out_base, recursive = TRUE, showWarnings = FALSE)
+  
+  cov_vector <- list(
+    "0->1" = covnames,
+    "0->2" = covnames,
+    "1->2" = covnames
+  )
+  
+  fits_list <-future_lapply(seeds, function(s) fit_one_seed_streams(s, cov_vector, sim_root,out_base,covariate_names=covnames))
+  fits_list <- Filter(function(x) {   !is.null(x$params) && all(!is.na(x$params)) }, fits_list)
+  if (length(fits_list) == 0) stop("No simulations loaded; check paths/seeds.")
 }
-
-
-
-gc()
-
 
 print("I AM DONE.")
 
-
+stopCluster()
+gc()
 }
 
 
