@@ -65,6 +65,10 @@ all_ci <- expand_grid(event_rate = term_rate) %>%
 
 save(all_ci,file = "Simulation/model_estimates_unif/overall_metrics_cleaned.RData")
 
+flextable::flextable(all_ci %>% arrange(model,trans_idx)) %>% flextable::save_as_docx(path="Simulation/model_estimates_unif/Results tables low.docx")
+
+
+
 all_ci <-  all_ci %>%
   filter(model %in% models)
 

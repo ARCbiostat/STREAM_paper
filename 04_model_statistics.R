@@ -25,6 +25,7 @@ out_root <- file.path(
 model_tags <- c("flexsurv","msm_age","nhm","mipd_iter","streams","streams2")
 # LOW
 
+model_tags <- "msm_age"
 rate <- term_rate[1]
 
 # ----------------- main -----------------
@@ -62,7 +63,7 @@ dir.create(out_root, recursive = TRUE, showWarnings = FALSE)
 
 
         dispatch_tag <- if (tag == "flexsurv") "flexsurv" else tag
-        covnames_all <- if (tag=="msm_age")  c("age",covnames) else covnames
+        covnames_all <- if (tag=="msm_age")  c(covnames,"age") else covnames
         ci <- try(
            safe_ci_call(dispatch_tag, obj,covnames_all),
            silent = TRUE)
