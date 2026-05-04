@@ -37,7 +37,7 @@ safe_ci_call <- function(tag, obj) {
 
 summarize_across_seeds <- function(per_seed) {
   per_seed %>%
-    group_by(scheme_id, model, param, trans_idx) %>%
+    group_by( model, param, trans_idx) %>%
     summarise(
       n_seeds         = n_distinct(seed),
       est_mean        = mean(est, na.rm = TRUE),
@@ -47,21 +47,21 @@ summarize_across_seeds <- function(per_seed) {
       type_I_rate      = mean(typeI, na.rm = TRUE),
       type_II_rate     = mean(typeII, na.rm = TRUE)
     ) %>%
-    arrange(param, trans_idx, model, scheme_id)
+    arrange(param, trans_idx, model)
 }
 
 
 
-list_model_files <- function(sim_root, scheme_id, term_rate, tag) {
-  base_dir <- file.path(sim_root, sprintf("cov_scheme_%d", scheme_id), term_rate, tag)
+list_model_files <- function(sim_root, term_rate, tag) {
+  base_dir <- file.path(sim_root, term_rate, tag)
 
   # helper to list files by regex + attach seed + submodel label
   .collect <- function(dir, pattern, sub = NA_character_) {
-    if (!dir.exists(dir)) return(tibble::tibble(filepath=character(), seed=integer(), model_sub=character()))
+    if (!dir.exists(dir)) return(data.frame(filepath=character(), seed=integer(), model_sub=character()))
     fs_all <- list.files(dir, pattern="\\.[Rr][Dd][Ss]$", full.names=TRUE, recursive=FALSE)
     fs <- fs_all[grepl(pattern, basename(fs_all))]
-    if (!length(fs)) return(tibble::tibble(filepath=character(), seed=integer(), model_sub=character()))
-    tibble::tibble(
+    if (!length(fs)) return(data.frame(filepath=character(), seed=integer(), model_sub=character()))
+    data.frame(
       filepath = fs,
       seed     = vapply(fs, parse_seed, integer(1), USE.NAMES = FALSE),
       model_sub= sub
@@ -75,8 +75,8 @@ list_model_files <- function(sim_root, scheme_id, term_rate, tag) {
     return(.collect(dir, pattern = ".", sub = tag)) # keep sub as tag for clarity
   } else if (tag == "flexsurv") {
     dir <- base_dir
-    df_panel <- .collect(dir, pattern = "^seed_[0-9]+_model_flex_panel\\.rds$", sub = "flexsurv_panel")
-    df_real  <- .collect(dir, pattern = "^seed_[0-9]+_model_flex_real\\.rds$",  sub = "flexsurv_real")
+    df_panel <- .collect(dir, pattern = "^seed_[0-9]+_model_flex_panel\\.rds$", sub = "flex_panel")
+    df_real  <- .collect(dir, pattern = "^seed_[0-9]+_model_flex_real\\.rds$",  sub = "flex_real")
     return(dplyr::bind_rows(df_panel, df_real))
   } else if (tag == "mipd_iter") {
     dir <- base_dir
@@ -89,7 +89,7 @@ list_model_files <- function(sim_root, scheme_id, term_rate, tag) {
     return(dplyr::bind_rows(df_model, df_bias))
   }else {
     dir <- base_dir
-    pat <- paste0("^seed_[0-9]+_model_", tag, "\\.[Rr][Dd][Ss]$")
+    pat <- paste0("^seed_[0-9]+_model_",gsub("[0-9]", "",tag), "\\.[Rr][Dd][Ss]$")
     return(.collect(dir, pattern = pat, sub = tag))
   }
 }
@@ -100,15 +100,15 @@ list_model_files <- function(sim_root, scheme_id, term_rate, tag) {
 # type I error = 1 when true value is not significant but estimated as significant (feasible when true value zero)
 # type II error = 1  when true value significant but estimated as not significant (feasible when true value !zero)
 
-ci_dispatch$cox <- function(obj) {
+ci_dispatch$cox <- function(obj,covnames) {
 
   ci  <- suppressMessages(suppressWarnings(stats::confint(obj)))
   est <- stats::coef(obj)
 
 
-  df <- tibble::tibble(
+  df <- data.frame(
     trans_idx = seq_along(est),
-    param     = "cov",
+    param     = covnames,
     est       = as.numeric(est),
     lwr       = ci[, 1],
     upr       = ci[, 2]
@@ -127,18 +127,18 @@ ci_dispatch$cox <- function(obj) {
   df$coverage <- as.integer( gt_vals >= df$lwr & gt_vals <= df$upr)
 
   df$typeI    <- ifelse( gt_vals == 0,
-                         as.integer(df$lwr > 0 | df$upr < 0),
+                         as.integer(df$lwr*df$upr >= 0),
                          NA_integer_)
 
   df$typeII <- ifelse(abs(gt_vals) > 0,
-                      as.integer(df$lwr < 0 & df$upr > 0), NA_integer_)
+                      as.integer(df$lwr*df$upr < 0), NA_integer_)
 
   df
 
 
 }
 
-ci_dispatch$flexsurv <- function(obj) {
+ci_dispatch$flexsurv <- function(obj,covnames) {
 
   ci <- lapply(obj, function(model) confint(model))
   est <- lapply(obj, function(model) coef(model))
@@ -159,7 +159,7 @@ ci_dispatch$flexsurv <- function(obj) {
     )
   })
 
-  param_order <- c("shape", "rate", "cov")
+  param_order <- c("shape", "rate", covnames)
   df <- df %>%
     mutate(param = factor(param, levels = param_order)) %>%
     arrange(param, trans_idx)
@@ -176,28 +176,28 @@ ci_dispatch$flexsurv <- function(obj) {
   df$coverage <- as.integer(!is.na(gt_vals) & gt_vals >= df$lwr & gt_vals <= df$upr)
 
   df$typeI    <- ifelse( gt_vals == 0,
-                         as.integer(df$lwr > 0 | df$upr < 0),
+                         as.integer(df$lwr*df$upr >=0),
                          NA_integer_)
 
   df$typeII <- ifelse(abs(gt_vals) > 0,
-                      as.integer(df$lwr < 0  &  df$upr > 0), NA_integer_)
+                      as.integer(df$lwr*df$upr < 0), NA_integer_)
 
   df
 
 
 }
 
-ci_dispatch$msm <- function(obj) {
+ci_dispatch$msm <- function(obj,covnames) {
 
   ci  <- obj$ci
   est <- obj$estimates
 
-  df <- tibble::tibble(
-    trans_idx = c(1,2,3),
-    param     = "cov",
-    est       = as.numeric(est[4:6]),
-    lwr       = ci[4:6, 1],
-    upr       = ci[4:6, 2]
+  df <- data.frame(
+    trans_idx = rep(c(1,2,3),length(covnames)),
+    param     = rep(covnames,each=3),
+    est       = as.numeric(est[4:length(est)]),
+    lwr       = as.numeric(ci[4:length(est), 1]),
+    upr       = as.numeric(ci[4:length(est), 2])
   )
 
   gt <- as.matrix(ground_truth)
@@ -212,11 +212,11 @@ ci_dispatch$msm <- function(obj) {
   df$coverage <- as.integer( gt_vals >= df$lwr & gt_vals <= df$upr)
 
   df$typeI    <- ifelse( gt_vals == 0,
-                         as.integer(df$lwr > 0 | df$upr < 0),
+                         as.integer(df$lwr*df$upr >= 0),
                          NA_integer_)
 
   df$typeII <- ifelse(abs(gt_vals) > 0,
-                      as.integer(df$lwr < 0  &  df$upr > 0), NA_integer_)
+                      as.integer(df$lwr*df$upr < 0), NA_integer_)
 
   df
 
@@ -267,22 +267,22 @@ get_params_nhm <- function (x, ci = TRUE, ...)
 
 }
 
-ci_dispatch$nhm <- function(obj) {
+ci_dispatch$nhm <- function(obj,covnames) {
 
   ci  <- get_params_nhm(obj, ci = TRUE)
   ci <-  unname(ci[,2:3])
   est <- obj$par
 
-  df <- tibble::tibble(
-    trans_idx = rep(1:3,3),
-    param     = c(rep("rate",3), rep("shape",3), rep("cov",3)),
+  df <- data.frame(
+    trans_idx = rep(1:3,2+length(covnames)),
+    param     = rep(c("rate","shape", covnames),each=3),
     est       = as.numeric(est),
     lwr       = ci[, 1],
     upr       = ci[, 2]
   )
 
 
-  param_order <- c("shape", "rate", "cov")
+  param_order <- c("shape", "rate", covnames)
   df <- df %>%
     mutate(param = factor(param, levels = param_order)) %>%
     arrange(param, trans_idx)
@@ -299,11 +299,11 @@ ci_dispatch$nhm <- function(obj) {
   df$coverage <- as.integer( gt_vals >= df$lwr & gt_vals <= df$upr)
 
   df$typeI    <- ifelse( gt_vals == 0,
-                         as.integer(df$lwr > 0 | df$upr < 0),
+                         as.integer(df$lwr*df$upr >= 0),
                          NA_integer_)
 
   df$typeII <- ifelse(abs(gt_vals) > 0,
-                      as.integer(df$lwr < 0  &  df$upr > 0), NA_integer_)
+                      as.integer(df$lwr*df$upr < 0), NA_integer_)
 
   df
 
@@ -404,59 +404,59 @@ Ic_computation <- function(avg_parameters, all_fits,
 }
 
 
-ci_dispatch$mipd_iter <- function(obj, bias_hat =NULL) {
+# ci_dispatch$mipd_iter <- function(obj, bias_hat =NULL) {
 
 
-  est <- averaging_params(obj)
-  ci  <- Ic_computation(est, obj)
-
-  df <- map_dfr(seq_along(ci), function(k) {
-    ci_k   <- as.matrix(ci[[k]])
-    pars   <- rownames(ci_k)
-    est_k  <- est[k,]
-    est_k  <- setNames(as.numeric(est_k), names(est_k))
-
-    tibble(
-      trans_idx = k,
-      param     = pars,
-      est       = unname(est_k[pars]),
-      lwr       = ci_k[, 1],
-      upr       = ci_k[, 2]
-    )
-  })
-
-  param_order <- c("shape", "rate", "cov")
-  df <- df %>%
-    mutate(param = factor(param, levels = param_order)) %>%
-    arrange(param, trans_idx)
-
-  gt <- as.matrix(ground_truth)
-  j  <- match(df$param, colnames(gt))
-  ok <- !is.na(j) & df$trans_idx >= 1 & df$trans_idx <= nrow(gt)
-
-  gt_vals <- rep(NA_real_, nrow(df))
-  gt_vals[ok] <- gt[cbind(df$trans_idx[ok], j[ok])]
-
-  df$gt <- gt_vals
-  df$rel_bias <- if_else(gt_vals != 0, (df$est- gt_vals) / abs(gt_vals), NA_real_)
-  df$coverage <- as.integer(!is.na(gt_vals) & gt_vals >= df$lwr & gt_vals <= df$upr)
-
-  df$typeI    <- ifelse( gt_vals == 0,
-                         as.integer(df$lwr > 0 | df$upr < 0),
-                         NA_integer_)
-
-  df$typeII <- ifelse(abs(gt_vals) > 0,
-                      as.integer(df$lwr < 0  &  df$upr > 0), NA_integer_)
-
-  df
-
-
-}
-
+#   est <- averaging_params(obj)
+#   ci  <- Ic_computation(est, obj)
+# 
+#   df <- map_dfr(seq_along(ci), function(k) {
+#     ci_k   <- as.matrix(ci[[k]])
+#     pars   <- rownames(ci_k)
+#     est_k  <- est[k,]
+#     est_k  <- setNames(as.numeric(est_k), names(est_k))
+# 
+#     tibble(
+#       trans_idx = k,
+#       param     = pars,
+#       est       = unname(est_k[pars]),
+#       lwr       = ci_k[, 1],
+#       upr       = ci_k[, 2]
+#     )
+#   })
+# 
+#   param_order <- c("shape", "rate", "cov")
+#   df <- df %>%
+#     mutate(param = factor(param, levels = param_order)) %>%
+#     arrange(param, trans_idx)
+# 
+#   gt <- as.matrix(ground_truth)
+#   j  <- match(df$param, colnames(gt))
+#   ok <- !is.na(j) & df$trans_idx >= 1 & df$trans_idx <= nrow(gt)
+# 
+#   gt_vals <- rep(NA_real_, nrow(df))
+#   gt_vals[ok] <- gt[cbind(df$trans_idx[ok], j[ok])]
+# 
+#   df$gt <- gt_vals
+#   df$rel_bias <- if_else(gt_vals != 0, (df$est- gt_vals) / abs(gt_vals), NA_real_)
+#   df$coverage <- as.integer(!is.na(gt_vals) & gt_vals >= df$lwr & gt_vals <= df$upr)
+# 
+#   df$typeI    <- ifelse( gt_vals == 0,
+#                          as.integer(df$lwr > 0 | df$upr < 0),
+#                          NA_integer_)
+# 
+#   df$typeII <- ifelse(abs(gt_vals) > 0,
+#                       as.integer(df$lwr < 0  &  df$upr > 0), NA_integer_)
+# 
+#   df
+# 
+# 
+# }
+ci_dispatch$mipd_iter <- ci_dispatch$flexsurv
 
 
 averaging_params <- function(all_fits) {
-  param_names <- names(stats::coef(all_fits[[1]][[1]]))
+  param_names <- names(stats::coef(all_fits[[1]]))
   out <- matrix(0, nrow = length(all_fits[[1]]), ncol = length(param_names))
   colnames(out) <- param_names
   for (i in seq_along(all_fits[[1]])) {
@@ -612,7 +612,7 @@ ci_teach_stud <- function(all_fits, ground_truth, alpha = 0.05, use_t = TRUE, pa
     ci_k   <- as.matrix(ci[[k]])
     pars   <- rownames(ci_k)
     est_k  <- setNames(as.numeric(est[k, ]), colnames(est))
-    tibble::tibble(
+    data.frame(
       trans_idx = k,
       param     = pars,
       est       = unname(est_k[pars]),
@@ -634,10 +634,10 @@ ci_teach_stud <- function(all_fits, ground_truth, alpha = 0.05, use_t = TRUE, pa
   df$rel_bias <- dplyr::if_else(!is.na(gt_vals) & gt_vals != 0, (df$est - gt_vals) / abs(gt_vals), NA_real_)
   df$coverage <- as.integer(!is.na(gt_vals) & gt_vals >= df$lwr & gt_vals <= df$upr)
   df$typeI    <- dplyr::if_else(!is.na(gt_vals) & gt_vals == 0,
-                                as.integer(df$lwr > 0 | df$upr < 0),
+                                as.integer(df$lwr*df$upr >= 0),
                                 NA_integer_)
   df$typeII   <- dplyr::if_else(!is.na(gt_vals) & gt_vals != 0,
-                                as.integer(df$lwr < 0 & df$upr > 0),
+                                as.integer(df$lwr*df$upr < 0),
                                 NA_integer_)
   df
 }
@@ -646,7 +646,6 @@ ci_teach_stud <- function(all_fits, ground_truth, alpha = 0.05, use_t = TRUE, pa
 compute_ci_summaries <- function(
     sim_root,
     out_root,
-    scheme_ids,
     term_rate,
     model_tags,
     ci_dispatch,
@@ -696,13 +695,13 @@ compute_ci_summaries <- function(
     if (length(hit) == 2) as.integer(hit[2]) else NA_integer_
   }
 
-  list_model_files <- function(sim_root, scheme_id, term_rate, tag,
+  list_model_files <- function(sim_root, term_rate, tag,
                                filename = "fits.RData", seeds = NULL) {
     stopifnot(is.character(sim_root), dir.exists(sim_root))
-    base_dir <- file.path(sim_root, sprintf("cov_scheme_%d", scheme_id), term_rate, tag)
+    base_dir <- file.path(sim_root, term_rate, tag)
     if (!dir.exists(base_dir)) {
       if (isTRUE(verbose)) warning("Base dir not found: ", base_dir)
-      return(tibble::tibble(filepath=character(), seed=integer(), model_sub=character()))
+      return(data.frame(filepath=character(), seed=integer(), model_sub=character()))
     }
     # only immediate seed_* subdirs
     sdirs <- list.dirs(base_dir, full.names = TRUE, recursive = FALSE)
@@ -714,11 +713,11 @@ compute_ci_summaries <- function(
     files <- file.path(sdirs, "results", filename)
     exists <- file.exists(files)
     if (!any(exists)) {
-      return(tibble::tibble(filepath=character(), seed=integer(), model_sub=character()))
+      return(data.frame(filepath=character(), seed=integer(), model_sub=character()))
     }
     files <- files[exists]
     seeds_found <- vapply(basename(dirname(dirname(files))), .parse_seed_dir, integer(1))
-    tibble::tibble(
+    data.frame(
       filepath = files,
       seed     = seeds_found,
       model_sub = tag
@@ -726,12 +725,13 @@ compute_ci_summaries <- function(
       dplyr::mutate(seed = dplyr::if_else(is.na(seed), dplyr::row_number(), seed)) %>%
       dplyr::arrange(seed)
   }
+  }
 
-  safe_ci_call <- function(tag, obj) {
+  safe_ci_call <- function(tag, obj,covnames) {
     fn <- ci_dispatch[[tag]]
     if (!is.function(fn))
       stop(sprintf("No CI function provided for tag '%s'", tag))
-    out <- fn(obj)
+    out <- fn(obj,covnames)
     # must at least have these
     req <- c("param","est","lwr","upr")
     if (!all(req %in% names(out)))
@@ -742,12 +742,13 @@ compute_ci_summaries <- function(
     out$param <- as.character(out$param)
     out
   }
+  
 
 
 
   summarize_across_seeds <- function(per_seed) {
     per_seed %>%
-      dplyr::group_by(scheme_id, model, param, trans_idx) %>%
+      dplyr::group_by( model, param, trans_idx) %>%
       dplyr::summarise(
         n_seeds       = dplyr::n_distinct(seed),
         est_mean      = mean(est, na.rm = TRUE),
@@ -758,93 +759,142 @@ compute_ci_summaries <- function(
         type_II_rate  = mean(typeII, na.rm = TRUE),
         .groups = "drop"
       ) %>%
-      dplyr::arrange(param, trans_idx, model, scheme_id)
+      dplyr::arrange(param, trans_idx, model)
+  }
+  
+  
+  # 
+  # # ----------------- output root -----------------
+  # dir.create(out_root, recursive = TRUE, showWarnings = FALSE)
+  # 
+  # # ----------------- main loop -----------------
+  # all_outputs <- list()
+  # 
+  # 
+  #   if (isTRUE(verbose)) cat("\n=== Scheme", scheme_id, "===\n")
+  #   # ground truth for this scheme (optional)
+  #   gt_path <- if (!is.null(gt_dir)) {
+  #     file.path(gt_dir, term_rate, sprintf("params_scheme_%02d.rds", scheme_id))
+  #   } else NULL
+  #   ground_truth <- if (!is.null(gt_path) && file.exists(gt_path)) {
+  #     readRDS(gt_path)
+  #   } else {
+  #     if (!is.null(gt_dir) && isTRUE(verbose))
+  #       warning(sprintf("ground truth not found at %s", gt_path))
+  #     NULL
+  #   }
+  # 
+  #   scheme_out_dir <- file.path(out_root, term_rate)
+  #   dir.create(scheme_out_dir, recursive = TRUE, showWarnings = FALSE)
+  # 
+  #   per_tag_results <- list()
+  # 
+  #   for (tag in model_tags) {
+  #     if (isTRUE(verbose)) cat(" • Model tag:", tag, "\n")
+  # 
+  #     out_base <- file.path(out_root,  term_rate, tag)
+  #     ic_path  <- file.path(out_base, "ic_summary.rds")
+  #     if (file.exists(ic_path) && !overwrite) {
+  #       if (isTRUE(verbose)) cat("   - summary exists, skipping (set overwrite=TRUE):", ic_path, "\n")
+  #       per_tag_results[[tag]] <- readRDS(ic_path)
+  #       next
+  #     }
+  # 
+  #     files_df <- list_model_files(sim_root,term_rate, tag, filename = filename, seeds = seeds)
+  #     if (nrow(files_df) == 0) {
+  #       warning(sprintf(" %s] no files found", tag))
+  #       next
+  #     }
+  # 
+  #     # per-seed extraction
+  #     per_seed <- purrr::pmap_dfr(
+  #       files_df,
+  #       function(filepath, seed, model_sub = NA_character_, kind = NULL) {
+  #         # Load model
+  #         obj_name <- load(filepath)
+  #         obj <- get(obj_name)
+  # 
+  #         # Directly call CI computation
+  #         ci <- try(ci_teach_stud(obj, ground_truth), silent = TRUE)
+  # 
+  #         if (inherits(ci, "try-error") || nrow(ci) == 0) {
+  #           warning(sprintf("[%s] seed %s: CI computation failed" ,tag, seed))
+  #           return(data.frame())
+  #         }
+  # 
+  # 
+  #         # Tag info
+  #         reported_model <- if (!is.na(model_sub)) model_sub else tag
+  #         dplyr::mutate(ci,  model = reported_model, seed = seed)
+  #       }
+  #     )
+  # 
+  # 
+  #     if (nrow(per_seed) == 0) {
+  #       warning(sprintf("[ %s] nothing extracted", tag))
+  #       next
+  #     }
+  # 
+  #     ic_summary <- summarize_across_seeds(per_seed)
+  #     dir.create(out_base, showWarnings = FALSE, recursive = TRUE)
+  #     saveRDS(ic_summary, file = ic_path)
+  # 
+  #     per_tag_results[[tag]] <- ic_summary
+  #   } # /for tag
+  # 
+  #   all_outputs <- per_tag_results
+  # } # /for scheme
+  # 
+
+
+
+  ci_dispatch$streams <- function(obj,covnames) {
+    
+    ci <- lapply(obj, function(model) confint(model))
+    est <- lapply(obj, function(model) coef(model))
+    
+    
+    df <- map_dfr(seq_along(ci), function(k) {
+      ci_k   <- as.matrix(ci[[k]])
+      pars   <- rownames(ci_k)
+      est_k  <- est[[k]]
+      est_k  <- setNames(as.numeric(est_k), names(est_k))
+      
+      tibble(
+        trans_idx = k,
+        param     = pars,
+        est       = unname(est_k[pars]),
+        lwr       = ci_k[, 1],
+        upr       = ci_k[, 2]
+      )
+    })
+    
+    param_order <- c("shape", "rate", covnames)
+    df <- df %>%
+      mutate(param = factor(param, levels = param_order)) %>%
+      arrange(param, trans_idx)
+    
+    gt <- as.matrix(ground_truth)
+    j  <- match(df$param, colnames(gt))
+    ok <- !is.na(j) & df$trans_idx >= 1 & df$trans_idx <= nrow(gt)
+    
+    gt_vals <- rep(NA_real_, nrow(df))
+    gt_vals[ok] <- gt[cbind(df$trans_idx[ok], j[ok])]
+    
+    df$gt <- gt_vals
+    df$rel_bias <- if_else(gt_vals != 0, (df$est- gt_vals) / abs(gt_vals), NA_real_)
+    df$coverage <- as.integer(!is.na(gt_vals) & gt_vals >= df$lwr & gt_vals <= df$upr)
+    
+    df$typeI    <- ifelse( gt_vals == 0,
+                           as.integer(df$lwr*df$upr >=0),
+                           NA_integer_)
+    
+    df$typeII <- ifelse(abs(gt_vals) > 0,
+                        as.integer(df$lwr*df$upr < 0), NA_integer_)
+    
+    df
+    
+    
   }
 
-  # ----------------- output root -----------------
-  dir.create(out_root, recursive = TRUE, showWarnings = FALSE)
-
-  # ----------------- main loop -----------------
-  all_outputs <- list()
-
-  for (scheme_id in scheme_ids) {
-    if (isTRUE(verbose)) cat("\n=== Scheme", scheme_id, "===\n")
-    # ground truth for this scheme (optional)
-    gt_path <- if (!is.null(gt_dir)) {
-      file.path(gt_dir, term_rate, sprintf("params_scheme_%02d.rds", scheme_id))
-    } else NULL
-    ground_truth <- if (!is.null(gt_path) && file.exists(gt_path)) {
-      readRDS(gt_path)
-    } else {
-      if (!is.null(gt_dir) && isTRUE(verbose))
-        warning(sprintf("[scheme %d] ground truth not found at %s", scheme_id, gt_path))
-      NULL
-    }
-
-    scheme_out_dir <- file.path(out_root, sprintf("cov_scheme_%d", scheme_id), term_rate)
-    dir.create(scheme_out_dir, recursive = TRUE, showWarnings = FALSE)
-
-    per_tag_results <- list()
-
-    for (tag in model_tags) {
-      if (isTRUE(verbose)) cat(" • Model tag:", tag, "\n")
-
-      out_base <- file.path(out_root, sprintf("cov_scheme_%d", scheme_id), term_rate, tag)
-      ic_path  <- file.path(out_base, "ic_summary.rds")
-      if (file.exists(ic_path) && !overwrite) {
-        if (isTRUE(verbose)) cat("   - summary exists, skipping (set overwrite=TRUE):", ic_path, "\n")
-        per_tag_results[[tag]] <- readRDS(ic_path)
-        next
-      }
-
-      files_df <- list_model_files(sim_root, scheme_id, term_rate, tag, filename = filename, seeds = seeds)
-      if (nrow(files_df) == 0) {
-        warning(sprintf("[scheme %d | %s] no files found", scheme_id, tag))
-        next
-      }
-
-      # per-seed extraction
-      per_seed <- purrr::pmap_dfr(
-        files_df,
-        function(filepath, seed, model_sub = NA_character_, kind = NULL) {
-          # Load model
-          obj_name <- load(filepath)
-          obj <- get(obj_name)
-
-          # Directly call CI computation
-          ci <- try(ci_teach_stud(obj, ground_truth), silent = TRUE)
-
-          if (inherits(ci, "try-error") || nrow(ci) == 0) {
-            warning(sprintf("[scheme %d | %s] seed %s: CI computation failed", scheme_id, tag, seed))
-            return(tibble::tibble())
-          }
-
-
-          # Tag info
-          reported_model <- if (!is.na(model_sub)) model_sub else tag
-          dplyr::mutate(ci, scheme_id = scheme_id, model = reported_model, seed = seed)
-        }
-      )
-
-
-      if (nrow(per_seed) == 0) {
-        warning(sprintf("[scheme %d | %s] nothing extracted", scheme_id, tag))
-        next
-      }
-
-      ic_summary <- summarize_across_seeds(per_seed)
-      dir.create(out_base, showWarnings = FALSE, recursive = TRUE)
-      saveRDS(ic_summary, file = ic_path)
-
-      per_tag_results[[tag]] <- ic_summary
-    } # /for tag
-
-    all_outputs[[as.character(scheme_id)]] <- per_tag_results
-  } # /for scheme
-
-
-}
-
-ci_dispatch <- list(
-  dropout_adaptive_tau = ci_teach_stud
-)
+  ci_dispatch$streams2 <- ci_dispatch$streams

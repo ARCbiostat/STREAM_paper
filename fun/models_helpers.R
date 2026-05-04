@@ -140,11 +140,11 @@ fit_one_seed_gomp <- function(seed,path,out_dir,model_tag,covariate_names) {
     sub_p <- subset(data_long_panel, trans == i)
 
     fits_real[[i]] <- if (nrow(sub_r) == 0 || sum(sub_r$status) == 0) NA else
-      tryCatch(flexsurvreg(as.formula(paste("Surv(Tstart, Tstop, status) ~", covariate_names)), data = sub_r, dist = "gompertz"),
+      tryCatch(flexsurvreg(as.formula(paste("Surv(Tstart, Tstop, status) ~", paste(covariate_names, collapse = " + "))), data = sub_r, dist = "gompertz"),
                error = function(e) NA)
 
     fits_panel[[i]] <- if (nrow(sub_p) == 0 || sum(sub_p$status) == 0) NA else
-      tryCatch(flexsurvreg(as.formula(paste("Surv(Tstart, Tstop, status) ~", covariate_names)), data = sub_p, dist = "gompertz"),
+      tryCatch(flexsurvreg(as.formula(paste("Surv(Tstart, Tstop, status) ~", paste(covariate_names, collapse = " + "))), data = sub_p, dist = "gompertz"),
                error = function(e) NA)
   }
 
@@ -209,7 +209,7 @@ fit_msm <- function(df,covariate_names) {
         subject    = patient_id,
         data       = df,
         qmatrix    = Q,
-        covariates = as.formula(paste("~",covariate_names)),
+        covariates = as.formula(paste("~",paste(covariate_names, collapse = " + "))),
         censor     = 99,
         control    = list(fnscale = 1000, maxit = 1000),
         deathexact = TRUE),
@@ -254,7 +254,7 @@ fit_msm_age <- function(df,seed,out_dir,covariate_names) {
         data = df,
         qmatrix = Q,
         gen.inits = F,
-        covariates = as.formula(paste("~",covariate_names,"+age")) ,
+        covariates = as.formula(paste("~",paste(covariate_names, collapse = " + "),"+age")) ,
         control    = list(fnscale = 1000, maxit = 1000),
         censor = 99,
         deathexact = TRUE),
@@ -274,7 +274,7 @@ fit_msm_age <- function(df,seed,out_dir,covariate_names) {
                   dimnames = list(c("1","2","3"),
                                   c("rate",covariate_names, "age")))
   } else {
-    mat <- matrix(v, nrow = 3, byrow = F,
+    mat <- matrix(v, nrow = 3,ncol=2+length(covariate_names), byrow = F,
                   dimnames = list(c("1","2","3"),
                                   c("rate",covariate_names, "age")))
   }
@@ -329,7 +329,9 @@ fit_nhm <- function(df,covariate_names) {
   split_points <- find_splits(df$age)
 
   covm <- rep(list(tmat_1), length(covariate_names))
-  covm <- lapply(seq_len(length(covariate_names)), function(i) covm[[i]] + (i-1)*3)
+  covm <- lapply(seq_len(length(covariate_names)), function(i) (covm[[i]] + (i-1)*3)*matrix(c(0,1,1,
+                                                                                              0,0,1,
+                                                                                              0,0,0),byrow=T,ncol=3,nrow=3))
   names(covm) <- covariate_names
   fit <- tryCatch({
     object_nhm <- model.nhm(
@@ -359,7 +361,7 @@ fit_nhm <- function(df,covariate_names) {
 
 
   if (is.null(fit)) {
-    mat <- matrix(NA_real_, nrow = 3, ncol = 3,
+    mat <- matrix(NA_real_, nrow = 3, ncol = 2+length(covariate_names),
                   dimnames = list(c("1","2","3"),
                                   c("rate", "shape", covariate_names)))
     return(list(model = NULL, params = mat))
@@ -367,11 +369,11 @@ fit_nhm <- function(df,covariate_names) {
 
   v <- fit$par
   if (length(v) < 9) {
-    mat <- matrix(NA_real_, nrow = 3, ncol = 3,
+    mat <- matrix(NA_real_, nrow = 3, ncol = 2+length(covariate_names),
                   dimnames = list(c("1","2","3"),
                                   c("rate", "shape", covariate_names)))
   } else {
-    mat <- matrix(v[1:9], nrow = 3, ncol = 3,
+    mat <- matrix(v[1:9], nrow = 3, ncol = 2+length(covariate_names),
                   dimnames = list(c("1","2","3"),
                                   c("rate", "shape", covariate_names)))
   }
@@ -451,10 +453,10 @@ eps = eps),
   out_seed_dir <- file.path(out_dir)
   dir.create(out_seed_dir, recursive = TRUE, showWarnings = FALSE)
 
-  saveRDS(res[[1]],  file.path(out_seed_dir, sprintf("seed_%03d_model_mipd.rds",  seed)))
+  saveRDS(res,  file.path(out_seed_dir, sprintf("seed_%03d_model_mipd.rds",  seed)))
 
 
-  list(params = res[[2]])
+  list(params = res)
 }
 
 
@@ -485,14 +487,15 @@ fit_one_seed_streams <- function(seed,cov_vector,path,out_dir,covariate_names) {
   
   
   
-  res <- tryCatch(
+  res <- #tryCatch(
     est <- run_streams(
       data = panel_data,
       cov_vector = cov_vector,
       python = Sys.which("python"),
-      pu_args = list(verbose = TRUE)
-    ),
-    error = function(e) NULL
+      pu_args = list(verbose = TRUE),
+      m=20
+    #),
+   # error = function(e) NULL
   )
   
   
@@ -502,7 +505,54 @@ fit_one_seed_streams <- function(seed,cov_vector,path,out_dir,covariate_names) {
   saveRDS(res,  file.path(out_seed_dir, sprintf("seed_%03d_model_streams.rds",  seed)))
   
   
-  list(params = res[[2]])
+  list(params = res)
 }
 
+
+fit_one_seed_streams2 <- function(seed,cov_vector,path,out_dir,covariate_names) {
+  sim_path <- file.path(path,
+                        sprintf("simulation_ready_%03d.rds", seed)
+  )
+  if (!file.exists(sim_path)) {
+    message(sprintf("Missing file for seed %d -> skip", seed))
+    return(NULL)
+  }
+  
+  d <- readRDS(sim_path)
+  panel_data <- d[[2]]
+  
+  
+  panel_data %<>% select(patient_id,
+                         seed,
+                         age,
+                         dead,
+                         death_time,
+                         onset,
+                         onset_age,
+                         visits,
+                         any_of(covariate_names))
+  
+  
+  
+  
+  res <- #tryCatch(
+    est <- run_streams2(
+      data = panel_data,
+      cov_vector = cov_vector,
+      python = Sys.which("python"),
+      pu_args = list(verbose = TRUE),
+      m=20
+      #),
+      # error = function(e) NULL
+    )
+  
+  
+  out_seed_dir <- file.path(out_dir)
+  dir.create(out_seed_dir, recursive = TRUE, showWarnings = FALSE)
+  
+  saveRDS(res,  file.path(out_seed_dir, sprintf("seed_%03d_model_streams.rds",  seed)))
+  
+  
+  list(params = res)
+}
 

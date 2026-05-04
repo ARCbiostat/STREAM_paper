@@ -1,6 +1,6 @@
 
 
-run_models <- function(rate,models,covnames,pathnamein="Simulation/simulation_results",pathnameout="Simulation/models_results",cores=1){
+run_models <- function(rate,models,covnames,pathnamein="Simulation/simulation_results",pathnameout="Simulation/models_results",cores=1,seeds=1:200){
 
   plan(multisession,workers=cores)
   sim_root <- file.path(
@@ -12,8 +12,6 @@ run_models <- function(rate,models,covnames,pathnamein="Simulation/simulation_re
 
   print(sim_root)
   gt_root  <- paste0(pathnamein,"/ground_truth_params")
-
-  seeds <- 1:200
 
 
 
@@ -49,7 +47,7 @@ if(model_tag%in%models){
 
   cox_params <- rowMeans(coef_mat, na.rm = TRUE)
   cox_params <- as.matrix(cox_params, byrow=T)
-  colnames(cox_params) <- "cov"
+  colnames(cox_params) <- covnames
   rownames(cox_params) <- c(1,2,3)
 
   out_base <- file.path(out_root,
@@ -97,7 +95,7 @@ if(model_tag%in%models){
     dir.create(out_base, recursive = TRUE, showWarnings = FALSE)
 
 
-    fits_list <- future_lapply(seeds, function(s) fit_one_seed_msm(s, age = TRUE,sim_root,out_base,covariate_names=covnames))
+    fits_list <- lapply(seeds, function(s) fit_one_seed_msm(s, age = TRUE,sim_root,out_base,covariate_names=covnames))
     fits_list <- Filter(function(x) {   !is.null(x$params) && all(!is.na(x$params)) }, fits_list)
     if (length(fits_list) == 0) stop("No simulations loaded; check paths/seeds.")
 
@@ -168,7 +166,7 @@ if(model_tag%in%models){
     dir.create(out_base, recursive = TRUE, showWarnings = FALSE)
 
 
-    fits_list <-future_lapply(seeds, function(s) fit_one_seed_nhm(s,sim_root,sim_root,out_base,covariate_names=covnames)
+    fits_list <-lapply(seeds, function(s) fit_one_seed_nhm(s,sim_root,sim_root,out_base,covariate_names=covnames)
                          )
     fits_list <- Filter(function(x) {   !is.null(x$params) && all(!is.na(x$params)) }, fits_list)
     fits_list <- Filter(function(x) !isTRUE(x$model$singular), fits_list)
@@ -193,7 +191,7 @@ model_tag  <- "mipd_iter"
                           model_tag)
     dir.create(out_base, recursive = TRUE, showWarnings = FALSE)
 
-    cov_vector<-"cov"
+    cov_vector<-covnames
 
     fits_list <-future_lapply(seeds, function(s) fit_one_seed_mipd_iter(s, cov_vector, sim_root,out_base,covariate_names=covnames))
     fits_list <- Filter(function(x) {   !is.null(x$params) && all(!is.na(x$params)) }, fits_list)
@@ -222,15 +220,57 @@ if(model_tag%in%models){
     "0->2" = covnames,
     "1->2" = covnames
   )
+  library(reticulate)
+  
+  py <- import("sys")$executable
+  system2(py, c("-m", "ensurepip", "--default-pip"))
+  system2(py, c("-m", "pip", "--version"))
+  system2(py, c("-m", "pip", "install",
+                "numpy>=1.20",
+                "torch>=1.12",
+                "pyarrow>=7.0",
+                "scikit-learn>=1.0",
+                "tqdm>=4.0",
+                "pandas>=1.3"))
   
   fits_list <-future_lapply(seeds, function(s) fit_one_seed_streams(s, cov_vector, sim_root,out_base,covariate_names=covnames))
   fits_list <- Filter(function(x) {   !is.null(x$params) && all(!is.na(x$params)) }, fits_list)
   if (length(fits_list) == 0) stop("No simulations loaded; check paths/seeds.")
 }
 
+model_tag  <- "streams2"
+
+if(model_tag%in%models){
+  out_base <- file.path(out_root,
+                        model_tag)
+  dir.create(out_base, recursive = TRUE, showWarnings = FALSE)
+  
+  cov_vector <- list(
+    "0->1" = covnames,
+    "0->2" = covnames,
+    "1->2" = covnames
+  )
+  library(reticulate)
+  
+  py <- import("sys")$executable
+  system2(py, c("-m", "ensurepip", "--default-pip"))
+  system2(py, c("-m", "pip", "--version"))
+  system2(py, c("-m", "pip", "install",
+                "numpy>=1.20",
+                "torch>=1.12",
+                "pyarrow>=7.0",
+                "scikit-learn>=1.0",
+                "tqdm>=4.0",
+                "pandas>=1.3"))
+  
+  fits_list <-future_lapply(seeds, function(s) tryCatch(fit_one_seed_streams2(s, cov_vector, sim_root,out_base,covariate_names=covnames),error = function(e) NULL))
+  fits_list <- Filter(function(x) {   !is.null(x$params) && all(!is.na(x$params)) }, fits_list)
+  if (length(fits_list) == 0) stop("No simulations loaded; check paths/seeds.")
+}
+
 print("I AM DONE.")
 
-stopCluster()
+
 gc()
 }
 

@@ -13,7 +13,7 @@ library(readr)
 
 source("fun/simulate_panel_data.R")
 
-base_dir <- "Simulation/simulation_results"
+base_dir <- "Simulation/simulation_results_unif"
 dir.create(base_dir, showWarnings = FALSE)
 
 event_rate_labels <- c("low", "medium", "high")

@@ -40,8 +40,8 @@ simulate_panel_data <- function(n_pats, prevalence, max_sim_age, model_type, fol
     }
     create_input_data<- function(n_pats, prevalence,nseed){
       patients <- covariates_distr(n_pats*nseed,prevalence)
-      patients$patient_id=1:(n_seeds*n_pats)
-      patients$id=rep(1:n_pats,times=n_seeds)
+      patients$patient_id=1:(nseed*n_pats)
+      patients$id=rep(1:n_pats,times=nseed)
       patients$grp_id=rep(1:nseed,each=n_pats)
       strategies <- data.frame(strategy_id = 1)
       hesim_obj <- hesim_data(strategies = strategies,
@@ -111,8 +111,8 @@ simulate_panel_data <- function(n_pats, prevalence, max_sim_age, model_type, fol
   
   # Step 2: Right censoring
   apply_right_censoring <- function(temp,nseed){
-    #right_censoring <- runif(n = n_pats, min = 0, max = 20)
-    right_censoring <- rnorm(n = n_pats*nseed, mean=18, sd=3)
+    right_censoring <- runif(n = n_pats*nseed, min = 0, max = 20)
+    #right_censoring <- rnorm(n = n_pats*nseed, mean=18, sd=3)
     rc_id <- tibble(right_censoring = right_censoring, seed=rep(1:nseed,each=n_pats),
                     patient_id=rep(1:n_pats,times=nseed))
     temp <- temp%>%
